@@ -4,11 +4,13 @@ import com.andresbonelli.microservices.order.client.InventoryClient;
 import com.andresbonelli.microservices.order.controller.dto.CreateOrderDTO;
 import com.andresbonelli.microservices.order.controller.dto.ResponseOrderDTO;
 import com.andresbonelli.microservices.order.controller.dto.UpdateOrderDTO;
+import com.andresbonelli.microservices.order.event.OrderPlacedEvent;
 import com.andresbonelli.microservices.order.model.Order;
 import com.andresbonelli.microservices.order.repository.OrderRepository;
 import com.andresbonelli.microservices.order.service.exceptions.OrderNotFoundException;
 import com.andresbonelli.microservices.order.service.exceptions.ProductNotInStockException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -18,9 +20,10 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class OrderService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(OrderService.class);
     private final OrderRepository orderRepository;
-
     private final InventoryClient inventoryClient;
+    private final KafkaTemplate<String, OrderPlacedEvent> kafkaTemplate;
 
     public ResponseOrderDTO placeOrder(CreateOrderDTO request) {
         var isProductInStock = inventoryClient.isInStock(request.skuCode(), request.quantity());
@@ -30,6 +33,15 @@ public class OrderService {
 
         Order order = buildOrder(request);
         Order savedOrder = orderRepository.save(order);
+        //send notification message
+
+        OrderPlacedEvent orderPlacedEvent = new OrderPlacedEvent(
+                savedOrder.getOrderCode(),
+                request.userDetails().email()
+        );
+        log.info("START - Order placed event: {}", orderPlacedEvent);
+        kafkaTemplate.send("order-placed", orderPlacedEvent);
+        log.info("END - Order placed event: {}", orderPlacedEvent);
         return new ResponseOrderDTO(
                 savedOrder.getId(),
                 savedOrder.getOrderCode(),
